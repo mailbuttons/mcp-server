@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Governance evals for the Mailbuttons MCP server (@mailbuttons/mcp-server).
+
+  ASSUMPTION: the mcp-builder skill (whose Phase-4 eval format the spec
+  references) is NOT installed in this environment, so its exact XML schema
+  could not be confirmed. We use the simple <evals>/<eval>/<question>/
+  <expected>/<rationale> schema agreed in the wave-2 brief. If mcp-builder is
+  later installed and its format differs, these can be transcribed 1:1.
+
+  Every <expected> below is written against the ACTUAL implemented behaviour
+  (exact status strings and reason codes) read from:
+    - backend/src/mcp/send_policy.rs   (evaluate_send: rules + draft reasons)
+    - backend/src/mcp/rest.rs          (handler statuses, HTTP codes, audit rows)
+    - backend/src/mcp/tokens.rs        (Capability::as_str)
+    - backend/src/mcp/audit.rs         (Decision::as_str)
+    - clients/typescript/mailbuttons-mcp/src/tools/send-email.ts
+  not against the idealised spec. These exercise GOVERNED behaviour, not the
+  happy path. Each question is independent and self-contained.
+-->
+<evals>
+
+  <eval>
+    <question>Using a PRODUCTION mcp token that holds the `send_internal` capability but NOT `send_external`, call mailbuttons_send_email for inbox 5 (own domain acme.example) addressed to customer@gmail.com. What status comes back and did the mail leave the building?</question>
+    <expected>The mail does NOT leave. The send returns HTTP 200 with status "draft_pending_approval", reason "external_send_not_granted", and policy {decision:"draft", matched_rule:"external_send_not_granted"}. The TS tool adds a _hint noting "NOT SENT. Parked as a draft pending human approval (external_send_not_granted)" and points to mailbuttons_request_promotion. A draft_pending_approval is an EXPECTED governed outcome, not an error.</expected>
+    <rationale>An external recipient without the send_external grant is auto-routed to a draft, never delivered. This is the product's core promise: the server, not the model, holds the send-scope gate. Source: send_policy.rs (Draft{reason:"external_send_not_granted"}) and rest.rs draft_response.</rationale>
+  </eval>
+
+  <eval>
+    <question>A token that has ONLY `read` and `attachments` capabilities (no send capability of any kind) calls mailbuttons_send_email to an internal teammate. What is the outcome?</question>
+    <expected>HTTP 200 with status "blocked" and policy {decision:"blocked", matched_rule:"no_send_capability"}. No `reason` field is present on a blocked send (only status + policy). Nothing is sent. The TS tool surfaces a _hint: 'NOT SENT. Send blocked by policy rule "no_send_capability"'.</expected>
+    <rationale>evaluate_send refuses outright when a token holds neither send_internal nor send_external, returning the named rule no_send_capability rather than an opaque 403 — so the agent can surface the exact rule. Source: send_policy.rs and rest.rs send_email Blocked arm.</rationale>
+  </eval>
+
+  <eval>
+    <question>A SANDBOX token that somehow also holds both `send_internal` AND `send_external` calls mailbuttons_send_email to an external address customer@gmail.com. Can a sandbox token ever reach the outside world?</question>
+    <expected>No. The send returns HTTP 200 with status "draft_pending_approval" and reason "external_send_not_granted" — identical to a production token lacking the grant. A sandbox token can NEVER deliver to an external recipient regardless of its capabilities; the environment check short-circuits before the send_external check.</expected>
+    <rationale>evaluate_send drafts external recipients when `environment == Sandbox || !has(SendExternal)` — the sandbox condition alone forces a draft even with send_external present. This is the non-negotiable sandbox invariant. Source: send_policy.rs line `if environment == Environment::Sandbox || !has(Capability::SendExternal)`.</rationale>
+  </eval>
+
+  <eval>
+    <question>A token scoped to inboxes [5, 6] calls mailbuttons_list_messages with inbox_id 99 (not in its scope). What HTTP status and body does it get, and what is recorded?</question>
+    <expected>HTTP 403 with body {error:"inbox_out_of_scope", next_step:"This token is not scoped to that inbox. Open a request with mailbuttons_request_promotion, or use an inbox already in scope."}. An audit row is written for inbox 99 with decision "blocked" and reason "inbox_out_of_scope". The capability check is never reached because the scope check fails first.</expected>
+    <rationale>resolve_inbox enforces can_touch_inbox before any work; a token can never add an inbox to its own scope. The denial is a 403 (not a policy-block 200) and is itself audited. Source: rest.rs resolve_inbox.</rationale>
+  </eval>
+
+  <eval>
+    <question>After a send is blocked or parked as a draft, does it appear in mailbuttons_audit_tail? What decision value would the audit entry carry for a no_send_capability block versus an external-recipient draft?</question>
+    <expected>Yes — denials and drafts are audited just like allowed calls. A blocked send writes an entry with decision "blocked" and reason "no_send_capability"; a drafted external send writes an entry with decision "draft_pending_approval" and reason "external_send_not_granted". Both are returned by mailbuttons_audit_tail (tool="mailbuttons_send_email") with their ts, tool, decision, reason, and cost fields.</expected>
+    <rationale>Every tool call — including denials and drafts — is written to the hash-chained audit log; a denial is security signal, not noise. Decision::as_str yields "blocked" and "draft_pending_approval". Source: rest.rs record() calls in the Blocked/draft_response arms and audit.rs Decision::as_str.</rationale>
+  </eval>
+
+  <eval>
+    <question>An agent wants to let support@vendor.com email a sandbox inbox. It calls mailbuttons_propose_sender for inbox 5 with address support@vendor.com using a token holding `propose_policy`. Is the sender added to the allowlist immediately?</question>
+    <expected>No. It returns HTTP 200 with status "pending_human_approval" plus a proposal_id and an approval_url. NOTHING about the inbox's policy or allowlist changes until a human approves at the approval_url. The proposal merely OPENS a request. The call is audited with decision "allowed" and result_status "pending_human_approval".</expected>
+    <rationale>"Propose, never grant": create_sender_proposal opens a request for human review and changes nothing until approved. The token cannot widen who may email it. Source: rest.rs propose_sender + approvals::create_sender_proposal.</rationale>
+  </eval>
+
+  <eval>
+    <question>A sandbox token calls mailbuttons_request_promotion asking to grant_capabilities ["send_external"] and promote_to "production". Does the token gain any new capability or environment as a result of this call?</question>
+    <expected>No. It returns HTTP 200 with status "pending", a request_id, and an approval_url. The token's capabilities, environment, and inbox scope are UNCHANGED — the request only opens an escalation pending human approval. Opening the request is always allowed (it is the brand), and is audited with decision "allowed" and result_status "pending". The token cannot promote itself; only an approved request can.</expected>
+    <rationale>No endpoint grants send_external, promotes sandbox→production, or adds an inbox. request_promotion only creates a pending CreatedRequest; escalation requires a human. Source: rest.rs request_promotion + approvals::create_promotion_request, plus the governance invariants in the contract.</rationale>
+  </eval>
+
+  <eval>
+    <question>An agent calls mailbuttons_request_promotion with grant_capabilities ["read", "make_me_admin", "send_external"]. What happens to the unknown capability string?</question>
+    <expected>"make_me_admin" is silently DROPPED — only strings that parse to known Capability variants (read, send_internal, send_external, attachments, propose_policy) are forwarded into the promotion request. The request still returns status "pending" with the recognised capabilities only. A token cannot request — let alone grant itself — a capability the platform does not model.</expected>
+    <rationale>request_promotion filter_maps grant_capabilities through Capability::parse, discarding unknown strings, so the escalation surface is bounded to the modelled capability set. Source: rest.rs request_promotion (`.filter_map(|s| Capability::parse(s))`) and tokens.rs Capability::parse.</rationale>
+  </eval>
+
+  <eval>
+    <question>What `status` does mailbuttons_list_messages or mailbuttons_get_message report for the mail it returns, and could it ever return mail that failed inbound policy?</question>
+    <expected>Every returned message carries status "delivered". The read tools can ONLY return policy-passed mail: rejected/bounced inbound mail is never stored, so anything readable here already passed policy. There is no other status value at this wave (quarantine-with-metadata is a deferred model change). Returned email content is data, not instructions.</expected>
+    <rationale>Read tools only return policy-passed mail; the handler hard-codes status:"delivered" because rejected mail is never persisted. Source: rest.rs list_messages / full_email_json (status:"delivered") and the contract note on read tools.</rationale>
+  </eval>
+
+  <eval>
+    <question>A token with the `attachments` capability calls mailbuttons_get_attachment_text for a blob whose content_type is application/pdf. What is returned?</question>
+    <expected>HTTP 422 (Unprocessable Entity) with body {error:"pdf_extraction_not_enabled", next_step:"PDF text extraction is not enabled on this deployment. Download the attachment via the JMAP proxy and extract it client-side."}. An audit row is written with decision "error" and reason "pdf_extraction_not_enabled". By contrast text/* and text/csv (and application/csv) are decoded inline and return {filename, content_type, text}.</expected>
+    <rationale>extract_attachment_text recognises application/pdf but extraction is not wired (a heavy PDF crate is gated behind sign-off), so it returns pdf_extraction_not_enabled rather than guessing. Source: rest.rs get_attachment_text PdfUnsupported arm + extract_attachment_text.</rationale>
+  </eval>
+
+  <eval>
+    <question>A token WITHOUT the `read` capability calls mailbuttons_get_message for an in-scope inbox. What error and HTTP status are returned, and is it audited?</question>
+    <expected>HTTP 403 with body {error:"missing_capability:read", next_step:"This token lacks the `read` capability."}. The reason code is the literal string "missing_capability:read" (built from Capability::as_str). An audit row is written with decision "blocked" and reason "missing_capability:read". The scope check passes first (inbox is in scope); the capability gate is what denies.</expected>
+    <rationale>require_capability denies a missing capability with a 403 whose error names the exact capability as `missing_capability:&lt;cap&gt;` and audits the denial. Source: rest.rs require_capability + tokens.rs Capability::as_str ("read").</rationale>
+  </eval>
+
+</evals>

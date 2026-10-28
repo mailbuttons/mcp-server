@@ -1,0 +1,63 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.mailbuttons/mcp-server",
+  "title": "Mailbuttons",
+  "description": "Governed email for AI agents: a sandbox inbox to read and send from, human approval to go external.",
+  "version": "0.1.4",
+  "websiteUrl": "https://mailbuttons.com",
+  "repository": {
+    "url": "https://github.com/mailbuttons/mcp-server",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://mailbuttons.com/logo-mailbuttons-icon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mailbuttons.com/api/v1/mcp/rpc",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer token: a scoped Mailbuttons MCP token, sent as 'Bearer mb_sandbox_...' (or mb_production_... once promoted). Get one free: sign in with an email code to get an mbk_ API key, then POST https://mailbuttons.com/api/v1/mcp/sandbox-inboxes with it. Guide: https://mailbuttons.com/developers/#mcp",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@mailbuttons/mcp-server",
+      "version": "0.1.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "npx",
+      "environmentVariables": [
+        {
+          "name": "MAILBUTTONS_API_KEY",
+          "description": "A scoped Mailbuttons MCP token (mb_sandbox_...). Sandbox-by-default; external send requires human promotion.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "MAILBUTTONS_API_URL",
+          "description": "Backend base URL. Defaults to https://mailbuttons.com; set for self-hosted or local.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string",
+          "default": "https://mailbuttons.com"
+        }
+      ]
+    }
+  ]
+}

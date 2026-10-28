@@ -1,0 +1,60 @@
+{
+  "name": "@mailbuttons/mcp-server",
+  "version": "0.1.4",
+  "mcpName": "com.mailbuttons/mcp-server",
+  "description": "Mailbuttons MCP server for AI agents: a governed email inbox your agent can read and send from, sandbox by default, with human approval for anything external and every call on record. Stdio build plus the Claude Code skill; the hosted endpoint is served by the Mailbuttons backend.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "email",
+    "ai-agents",
+    "agent-email",
+    "inbox",
+    "mailbuttons",
+    "governance"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "mailbuttons-mcp": "dist/stdio-server.js"
+  },
+  "exports": {
+    ".": "./dist/server.js",
+    "./stdio": "./dist/stdio-server.js"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start:stdio": "node dist/stdio-server.js",
+    "lint": "tsc --noEmit",
+    "test": "npm run build && vitest run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.9"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://mailbuttons.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mailbuttons/mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/mailbuttons/mcp-server/issues"
+  }
+}
